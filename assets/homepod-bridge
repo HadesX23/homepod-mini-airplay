@@ -4,6 +4,8 @@
 # PipeWire null sink monitor -> parec -> FIFO -> owntone pipe input -> AirPlay 2.
 # On idle->active transition after WAS_IDLE, restarts owntone.service for clean RAOP reconnect.
 # Handles iPhone/other device AirPlay takeover by polling HomePod availability.
+# Releases AirPlay (deselects output) when PC goes idle so other devices can use HomePod.
+# Uses Owntone player progress to detect actual audio (not just stream presence).
 
 set -u
 
@@ -14,6 +16,7 @@ API="http://localhost:3689/api"
 POLL="0.25"
 GRACE=2
 COOLDOWN=6
+SILENCE_TIMEOUT=30
 HOMEPOD_IP="${HOMEPOD_IP:-192.168.1.83}"
 
 PAREC_PID=""
@@ -22,12 +25,19 @@ LAST_RESTART=0
 WAS_IDLE=false
 LAST_AVAILABLE_CHECK=0
 HOMEPOD_AVAILABLE=true
+LAST_PROGRESS=0
+LAST_PROGRESS_CHANGE=0
 
 log() { echo "[homepod-bridge] $*"; }
 
 player_state() {
     curl -sf --max-time 2 "$API/player" 2>/dev/null |
         sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p'
+}
+
+player_progress() {
+    curl -sf --max-time 2 "$API/player" 2>/dev/null |
+        sed -n 's/.*"item_progress_ms"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p'
 }
 
 sink_index() {
@@ -55,7 +65,6 @@ active_streams() {
 
 check_homepod_available() {
     local now=$(date +%s)
-    # Only check every 5 seconds to avoid spamming
     if [ $((now - LAST_AVAILABLE_CHECK)) -lt 5 ]; then
         return 0
     fi
@@ -76,12 +85,39 @@ check_homepod_available() {
     fi
 }
 
+check_audio_activity() {
+    local progress
+    progress=$(player_progress)
+    local now=$(date +%s)
+    
+    if [ -n "$progress" ] && [ "$progress" -gt 0 ]; then
+        if [ "$progress" -ne "$LAST_PROGRESS" ]; then
+            LAST_PROGRESS=$progress
+            LAST_PROGRESS_CHANGE=$now
+            return 0  # Audio advancing
+        elif [ $((now - LAST_PROGRESS_CHANGE)) -ge "$SILENCE_TIMEOUT" ]; then
+            return 1  # Progress stuck = silence
+        fi
+    fi
+    return 0  # Can't determine or no progress yet, assume active
+}
+
+release_airplay() {
+    log "releasing AirPlay (deselecting output $OUT_ID)"
+    curl -sf --max-time 2 -o /dev/null -X PUT "$API/outputs/$OUT_ID" \
+        -H 'Content-Type: application/json' -d '{"selected":false}' 2>/dev/null
+}
+
 start_parec() {
     if [ -n "$PAREC_PID" ] && kill -0 "$PAREC_PID" 2>/dev/null; then
         return
     fi
+    rm -f "$FIFO"
+    mkfifo "$FIFO"
     parec --raw --format=s16le --rate=44100 --channels=2 --device="$SINK.monitor" > "$FIFO" &
     PAREC_PID=$!
+    LAST_PROGRESS=0
+    LAST_PROGRESS_CHANGE=$(date +%s)
 }
 
 stop_parec() {
@@ -90,6 +126,7 @@ stop_parec() {
         wait "$PAREC_PID" 2>/dev/null
     fi
     PAREC_PID=""
+    rm -f "$FIFO"
 }
 
 restart_owntone() {
@@ -109,7 +146,6 @@ restart_owntone() {
 restart_session() {
     LAST_RESTART=$(date +%s)
     if [ "$WAS_IDLE" = true ]; then
-        # Wait for HomePod to be available before restarting owntone
         local attempts=0
         while [ $attempts -lt 20 ] && ! check_homepod_available; do
             log "waiting for HomePod to become available... ($attempts/20)"
@@ -137,7 +173,7 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-log "watching sink '$SINK' (HomePod IP: $HOMEPOD_IP)"
+log "watching sink '$SINK' (HomePod IP: $HOMEPOD_IP, silence timeout: ${SILENCE_TIMEOUT}s via Owntone progress)"
 
 while :; do
     n="$(active_streams)"
@@ -146,7 +182,15 @@ while :; do
 
     if [ "${n:-0}" -gt 0 ]; then
         IDLE_SINCE=""
-        if [ -z "$PAREC_PID" ] || ! kill -0 "$PAREC_PID" 2>/dev/null; then
+        # Check if audio is actually advancing via Owntone progress
+        if ! check_audio_activity; then
+            log "audio progress stuck for ${SILENCE_TIMEOUT}s, releasing AirPlay"
+            curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
+            stop_parec
+            release_airplay
+            WAS_IDLE=true
+            log "silence timeout, session released, AirPlay freed"
+        elif [ -z "$PAREC_PID" ] || ! kill -0 "$PAREC_PID" 2>/dev/null; then
             restart_session
         elif [ "$state" != "play" ] && [ $((now - LAST_RESTART)) -ge "$COOLDOWN" ]; then
             restart_session
@@ -156,8 +200,9 @@ while :; do
         if [ -n "$PAREC_PID" ] && [ $((now - IDLE_SINCE)) -ge "$GRACE" ]; then
             curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
             stop_parec
+            release_airplay
             WAS_IDLE=true
-            log "idle, session released"
+            log "idle, session released, AirPlay freed"
         fi
     fi
 
