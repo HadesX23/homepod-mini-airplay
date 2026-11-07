@@ -1,0 +1,17 @@
+[Unit]
+Description=Homebridge (HomeKit bridge for PC AirPlay control)
+After=network-online.target owntone.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/homebridge -U %h/.homebridge
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=HOME=%h
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+
+[Install]
+WantedBy=default.target

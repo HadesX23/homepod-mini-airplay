@@ -3,6 +3,7 @@
 # Keeps an OwnTone pipe session in sync with activity on the "HomePod Mini" sink.
 # PipeWire null sink monitor -> parec -> FIFO -> owntone pipe input -> AirPlay 2.
 # On idle->active transition after WAS_IDLE, restarts owntone.service for clean RAOP reconnect.
+# Handles iPhone/other device AirPlay takeover by polling HomePod availability.
 
 set -u
 
@@ -13,11 +14,14 @@ API="http://localhost:3689/api"
 POLL="0.25"
 GRACE=2
 COOLDOWN=6
+HOMEPOD_IP="${HOMEPOD_IP:-192.168.1.83}"
 
 PAREC_PID=""
 IDLE_SINCE=""
 LAST_RESTART=0
 WAS_IDLE=false
+LAST_AVAILABLE_CHECK=0
+HOMEPOD_AVAILABLE=true
 
 log() { echo "[homepod-bridge] $*"; }
 
@@ -47,6 +51,29 @@ active_streams() {
         }
         END { print n + 0 }
     '
+}
+
+check_homepod_available() {
+    local now=$(date +%s)
+    # Only check every 5 seconds to avoid spamming
+    if [ $((now - LAST_AVAILABLE_CHECK)) -lt 5 ]; then
+        return 0
+    fi
+    LAST_AVAILABLE_CHECK=$now
+    
+    if ping -c 1 -W 1 "$HOMEPOD_IP" >/dev/null 2>&1; then
+        if [ "$HOMEPOD_AVAILABLE" = false ]; then
+            log "HomePod became available again"
+            HOMEPOD_AVAILABLE=true
+        fi
+        return 0
+    else
+        if [ "$HOMEPOD_AVAILABLE" = true ]; then
+            log "HomePod unreachable (may be in use by another device)"
+            HOMEPOD_AVAILABLE=false
+        fi
+        return 1
+    fi
 }
 
 start_parec() {
@@ -82,6 +109,16 @@ restart_owntone() {
 restart_session() {
     LAST_RESTART=$(date +%s)
     if [ "$WAS_IDLE" = true ]; then
+        # Wait for HomePod to be available before restarting owntone
+        local attempts=0
+        while [ $attempts -lt 20 ] && ! check_homepod_available; do
+            log "waiting for HomePod to become available... ($attempts/20)"
+            sleep 1
+            attempts=$((attempts + 1))
+        done
+        if [ $attempts -eq 20 ]; then
+            log "HomePod still unavailable, attempting restart anyway"
+        fi
         restart_owntone
         WAS_IDLE=false
     fi
@@ -100,7 +137,7 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-log "watching sink '$SINK'"
+log "watching sink '$SINK' (HomePod IP: $HOMEPOD_IP)"
 
 while :; do
     n="$(active_streams)"

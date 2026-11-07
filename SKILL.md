@@ -15,6 +15,8 @@ Load this skill when the user wants to:
 - Control HomePod volume via multimedia keys (XF86AudioRaiseVolume/LowerVolume/Mute)
 - Auto-reconnect AirPlay session when switching audio outputs back to HomePod
 - Disable competing audio processors (Easy Effects) that hijack streams
+- Control playback via Siri ("Hey Siri, pause/play music") using Homebridge
+- Handle iPhone/other device AirPlay takeover gracefully
 
 ## Hard Rules
 
@@ -61,7 +63,13 @@ Load this skill when the user wants to:
 8. **Hyprland bindings** (`~/.config/hypr/bindings.lua`):
    - Unbind defaults FIRST, then bind `XF86AudioRaiseVolume/LowerVolume/Mute` to `homepod-volume`
 9. **Disable Easy Effects autostart**: `mv ~/.config/autostart/com.github.wwmm.easyeffects.desktop{,.disabled}`
-10. **Verify**: play audio → check `wpctl status` shows streams → `homepod_airplay` → Owntone `state=play`
+10. **Optional: Homebridge for Siri control**:
+    - Install: `npm install -g homebridge homebridge-config-ui-x homebridge-http-webhooks`
+    - Deploy config: `cp references/homebridge-config.json ~/.homebridge/config.json`
+    - Deploy service: `cp references/homebridge.service ~/.config/systemd/user/`
+    - Start: `systemctl --user daemon-reload && systemctl --user enable --now homebridge.service`
+    - Pair: Open Home app on iPhone → Add Accessory → Enter PIN 123-45-678
+11. **Verify**: play audio → check `wpctl status` shows streams → `homepod_airplay` → Owntone `state=play`
 
 ## Output Contract
 
@@ -84,12 +92,16 @@ Return a working HomePod Mini AirPlay 2 setup with:
 | openclaw restarts after `systemctl --user disable --now` | Agent-stack watchdog with `Restart=always`, `StartLimitIntervalSec=0` | `AGENT_STACK_NO_RECOVER=openclaw-gateway.service` in `~/.config/agent-stack/host.env` |
 | No audio after switching back to HomePod | Owntone RAOP session stale, pipe broken | Bridge detects `WAS_IDLE=true` → `systemctl --user restart owntone.service` → new session |
 | `write() failed: Broken pipe` in bridge logs | parec writing to FIFO after Owntone closed pipe | Bridge restarts session on next active stream detection |
+| iPhone takes over AirPlay, PC audio stops and doesn't recover | HomePod only supports one AirPlay source; Owntone session stale when iPhone releases | Bridge polls HomePod IP, waits for availability before restarting owntone (`HOMEPOD_IP` env var) |
+| Brave/YouTube Music clicks don't work (only keyboard) | GPU hardware acceleration issue on Wayland | Launch Brave with `--disable-gpu --disable-gpu-compositing` or disable in Settings → System → "Use graphics acceleration when available" |
 
 ## References
 
-- `assets/homepod-bridge` — bridge daemon script (with WAS_IDLE auto-reconnect)
+- `assets/homepod-bridge` — bridge daemon script (with WAS_IDLE auto-reconnect, HomePod availability polling)
 - `assets/homepod-volume` — volume CLI (0–100 clamp, mute toggle, state persistence)
 - `references/owntone.conf.example` — Owntone config template
 - `references/homepod-bridge.service` — systemd unit
 - `references/owntone.service` — systemd unit
 - `references/bindings.lua.snippet` — Hyprland keybindings (unbinds Omarchy defaults first)
+- `references/homebridge-config.json` — Homebridge config for Siri control ("Hey Siri, pause")
+- `references/homebridge.service` — Homebridge systemd unit
