@@ -1,0 +1,17 @@
+-- HomePod Mini volume control (add to ~/.config/hypr/bindings.lua)
+-- Unbind default Omarchy volume keys FIRST, then bind HomePod controls
+
+-- Unbind default Omarchy volume keys (they conflict with HomePod volume control)
+hl.unbind("XF86AudioRaiseVolume")
+hl.unbind("XF86AudioLowerVolume")
+hl.unbind("XF86AudioMute")
+
+-- HomePod Mini volume control via Owntone API
+-- Requires: ~/.local/bin/homepod-volume script (executable)
+o.bind("XF86AudioRaiseVolume", "HomePod volume up", "~/.local/bin/homepod-volume up")
+o.bind("XF86AudioLowerVolume", "HomePod volume down", "~/.local/bin/homepod-volume down")
+o.bind("XF86AudioMute", "HomePod mute toggle", "~/.local/bin/homepod-volume mute")
+
+-- Optional: precise volume with ALT (keeps Omarchy default for other sinks)
+-- o.bind("ALT + XF86AudioRaiseVolume", "Volume up precise", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+")
+-- o.bind("ALT + XF86AudioLowerVolume", "Volume down precise", "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-")

@@ -1,0 +1,22 @@
+# Owntone systemd user service
+# Place at ~/.config/systemd/user/owntone.service
+
+[Unit]
+Description=OwnTone AirPlay 2 sender (HomePod Mini bridge)
+After=network-online.target pipewire.service wireplumber.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/owntone -f -c %h/.config/owntone/owntone.conf
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+# PipeWire environment for any local audio (though audio.type=disabled)
+Environment=PIPEWIRE_RUNTIME_DIR=%t/pipewire-0
+Environment=XDG_RUNTIME_DIR=%t
+
+[Install]
+WantedBy=default.target

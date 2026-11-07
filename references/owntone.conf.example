@@ -1,0 +1,30 @@
+# Owntone configuration for HomePod Mini AirPlay bridge
+# Place at ~/.config/owntone/owntone.conf
+
+general {
+    db_path = "/home/user/.cache/owntone/songs3.db"
+    cache_dir = "/home/user/.cache/owntone"
+    logfile = "/home/user/.cache/owntone/owntone.log"
+    loglevel = info
+    ipv6 = no
+    start_buffer_ms = 500
+    user_agent = "AirPlay/999.0.0"
+}
+
+airplay_shared {
+    control_port = 7001
+    timing_port = 7002
+}
+
+library {
+    name = "HomePod Bridge"
+    port = 3689
+    directories = { "/home/user/.local/share/homepod-pipe" }
+    pipe_autostart = true
+    pipe_sample_rate = 44100
+    pipe_bits_per_sample = 16
+}
+
+audio {
+    type = "disabled"
+}

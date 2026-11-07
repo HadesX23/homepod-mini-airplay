@@ -1,0 +1,22 @@
+# HomePod Bridge systemd user service
+# Place at ~/.config/systemd/user/homepod-bridge.service
+
+[Unit]
+Description=HomePod Mini bridge (PipeWire sink -> OwnTone pipe input)
+After=pipewire.service wireplumber.service owntone.service
+Wants=owntone.service
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/homepod-bridge
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+# Ensure PipeWire environment
+Environment=PIPEWIRE_RUNTIME_DIR=%t/pipewire-0
+Environment=XDG_RUNTIME_DIR=%t
+
+[Install]
+WantedBy=default.target

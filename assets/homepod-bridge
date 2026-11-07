@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# HomePod Mini AirPlay Bridge
+# Keeps an OwnTone pipe session in sync with activity on the "HomePod Mini" sink.
+# PipeWire null sink monitor -> parec -> FIFO -> owntone pipe input -> AirPlay 2.
+# On idle->active transition after WAS_IDLE, restarts owntone.service for clean RAOP reconnect.
+
+set -u
+
+SINK="homepod_airplay"
+FIFO="$HOME/.local/share/homepod-pipe/homepod.pcm"
+OUT_ID="${HOMEPOD_OUTPUT_ID:-148186734507409}"
+API="http://localhost:3689/api"
+POLL="0.25"
+GRACE=2
+COOLDOWN=6
+
+PAREC_PID=""
+IDLE_SINCE=""
+LAST_RESTART=0
+WAS_IDLE=false
+
+log() { echo "[homepod-bridge] $*"; }
+
+player_state() {
+    curl -sf --max-time 2 "$API/player" 2>/dev/null |
+        sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p'
+}
+
+sink_index() {
+    pactl list short sinks 2>/dev/null | awk -v s="$SINK" '$2 == s { print $1; exit }'
+}
+
+active_streams() {
+    local idx
+    idx="$(sink_index)"
+    [ -z "$idx" ] && { echo 0; return; }
+    pactl list sink-inputs 2>/dev/null | awk -v idx="$idx" '
+        BEGIN { RS = ""; FS = "\n"; n = 0 }
+        {
+            s = ""; c = "no"
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^[ \t]*Sink: /)   s = $i
+                if ($i ~ /^[ \t]*Corked: /) c = $i
+            }
+            sub(/.*: /, "", s); sub(/.*: /, "", c)
+            if (s == idx && c == "no") n++
+        }
+        END { print n + 0 }
+    '
+}
+
+start_parec() {
+    if [ -n "$PAREC_PID" ] && kill -0 "$PAREC_PID" 2>/dev/null; then
+        return
+    fi
+    parec --raw --format=s16le --rate=44100 --channels=2 --device="$SINK.monitor" > "$FIFO" &
+    PAREC_PID=$!
+}
+
+stop_parec() {
+    if [ -n "$PAREC_PID" ]; then
+        kill "$PAREC_PID" 2>/dev/null
+        wait "$PAREC_PID" 2>/dev/null
+    fi
+    PAREC_PID=""
+}
+
+restart_owntone() {
+    log "restarting owntone.service to re-establish AirPlay connection"
+    systemctl --user restart owntone.service
+    for i in {1..30}; do
+        if curl -sf --max-time 1 "$API/outputs" >/dev/null 2>&1; then
+            sleep 0.5
+            return 0
+        fi
+        sleep 0.2
+    done
+    log "owntone restart timeout"
+    return 1
+}
+
+restart_session() {
+    LAST_RESTART=$(date +%s)
+    if [ "$WAS_IDLE" = true ]; then
+        restart_owntone
+        WAS_IDLE=false
+    fi
+    curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
+    start_parec
+    sleep 0.3
+    curl -sf --max-time 2 -o /dev/null -X PUT "$API/outputs/$OUT_ID" \
+        -H 'Content-Type: application/json' -d '{"selected":true}' 2>/dev/null
+    curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/play" 2>/dev/null
+    log "session restarted"
+}
+
+cleanup() {
+    stop_parec
+    exit 0
+}
+trap cleanup TERM INT
+
+log "watching sink '$SINK'"
+
+while :; do
+    n="$(active_streams)"
+    state="$(player_state)"
+    now=$(date +%s)
+
+    if [ "${n:-0}" -gt 0 ]; then
+        IDLE_SINCE=""
+        if [ -z "$PAREC_PID" ] || ! kill -0 "$PAREC_PID" 2>/dev/null; then
+            restart_session
+        elif [ "$state" != "play" ] && [ $((now - LAST_RESTART)) -ge "$COOLDOWN" ]; then
+            restart_session
+        fi
+    else
+        [ -z "$IDLE_SINCE" ] && IDLE_SINCE="$now"
+        if [ -n "$PAREC_PID" ] && [ $((now - IDLE_SINCE)) -ge "$GRACE" ]; then
+            curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
+            stop_parec
+            WAS_IDLE=true
+            log "idle, session released"
+        fi
+    fi
+
+    sleep "$POLL"
+done

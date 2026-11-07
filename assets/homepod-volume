@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# HomePod Mini Volume Control via Owntone API
+# Controls the HomePod Mini (AirPlay 2) volume directly, not PipeWire sink volume.
+
+OUT_ID="148186734507409"
+API="http://localhost:3689/api"
+STATE_FILE="/tmp/homepod-volume-state"
+
+get_volume() {
+    curl -sf "$API/outputs" 2>/dev/null | jq -r ".outputs[] | select(.id==\"$OUT_ID\") | .volume"
+}
+
+set_volume() {
+    local vol="$1"
+    curl -sf -X PUT "$API/outputs/$OUT_ID" \
+        -H 'Content-Type: application/json' \
+        -d "{\"volume\":$vol}" 2>/dev/null
+}
+
+case "${1:-}" in
+    up)
+        current=$(get_volume)
+        new=$((current + 5))
+        [ "$new" -gt 100 ] && new=100
+        set_volume "$new"
+        echo "$new" > "$STATE_FILE"
+        echo "Volume: $new%"
+        ;;
+    down)
+        current=$(get_volume)
+        new=$((current - 5))
+        [ "$new" -lt 0 ] && new=0
+        set_volume "$new"
+        echo "$new" > "$STATE_FILE"
+        echo "Volume: $new%"
+        ;;
+    set)
+        vol="$2"
+        current=$(get_volume)
+        if [ "$vol" -eq 0 ]; then
+            if [ "$current" -eq 0 ]; then
+                prev=$(cat "$STATE_FILE" 2>/dev/null || echo 50)
+                set_volume "$prev"
+                echo "Volume: $prev% (unmuted)"
+            else
+                echo "$current" > "$STATE_FILE"
+                set_volume 0
+                echo "Muted (was $current%)"
+            fi
+        else
+            set_volume "$vol"
+            echo "$vol" > "$STATE_FILE"
+            echo "Volume: $vol%"
+        fi
+        ;;
+    mute)
+        current=$(get_volume)
+        if [ "$current" -eq 0 ]; then
+            prev=$(cat "$STATE_FILE" 2>/dev/null || echo 50)
+            set_volume "$prev"
+            echo "Volume: $prev% (unmuted)"
+        else
+            echo "$current" > "$STATE_FILE"
+            set_volume 0
+            echo "Muted"
+        fi
+        ;;
+    get)
+        get_volume
+        ;;
+    *)
+        echo "Usage: $0 {up|down|set N|mute|get}"
+        exit 1
+        ;;
+esac
