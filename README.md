@@ -112,7 +112,20 @@ Multimedia keys bound in Hyprland:
 
 **Critical**: Default Omarchy volume bindings are unbound first to avoid dual control.
 
-## Troubleshooting
+## Error Resolutions (Debugged Issues)
+
+| Error / Symptom | Root Cause | Fix |
+|-----------------|------------|-----|
+| Audio plays but not on HomePod | Easy Effects intercepts all streams to `easyeffects_sink` | `pkill easyeffects` + disable autostart (`mv ~/.config/autostart/com.github.wwmm.easyeffects.desktop{,.disabled}`) |
+| Volume keys change PipeWire sink volume instead of HomePod | Omarchy default bindings conflict with custom bindings | `hl.unbind("XF86AudioRaiseVolume")` + `hl.unbind("XF86AudioLowerVolume")` + `hl.unbind("XF86AudioMute")` BEFORE `o.bind()` |
+| "Incomplete read, wanted 1764, got 268" in Owntone logs | Buffer underrun / broken RAOP pipe after output switch | Bridge restarts `owntone.service` on idle→active transition (`WAS_IDLE=true` triggers full reconnect) |
+| HomePod plays then stops after volume change | PipeWire stream-restore module restores old sink routing | `pactl unload-module module-stream-restore && pactl load-module module-stream-restore restore_device=false` |
+| Volume goes below 0 / keeps decreasing past mute | Double volume control (PipeWire + Owntone) | Unbind Omarchy defaults; clamp Owntone volume 0–100 in script |
+| openclaw restarts after `systemctl --user disable --now` | Agent-stack watchdog with `Restart=always`, `StartLimitIntervalSec=0` | `AGENT_STACK_NO_RECOVER=openclaw-gateway.service` in `~/.config/agent-stack/host.env` |
+| No audio after switching back to HomePod | Owntone RAOP session stale, pipe broken | Bridge detects `WAS_IDLE=true` → `systemctl --user restart owntone.service` → new session |
+| `write() failed: Broken pipe` in bridge logs | parec writing to FIFO after Owntone closed pipe | Bridge restarts session on next active stream detection |
+
+## Troubleshooting (Quick Reference)
 
 | Symptom | Fix |
 |---------|-----|
