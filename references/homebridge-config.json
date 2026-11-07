@@ -15,29 +15,26 @@
       "theme": "auto",
       "tempUnits": "c",
       "lang": "auto"
+    },
+    {
+      "platform": "HttpWebHooks",
+      "name": "HttpWebHooks",
+      "switches": [
+        {
+          "id": "pc-music-playback",
+          "name": "PC Music Playback",
+          "rejectUnauthorized": true,
+          "on_url": "http://localhost:3689/api/player/play",
+          "on_method": "POST",
+          "on_body": "{}",
+          "on_headers": "{\"Content-Type\": \"application/json\"}",
+          "off_url": "http://localhost:3689/api/player/stop",
+          "off_method": "POST",
+          "off_body": "{}",
+          "off_headers": "{\"Content-Type\": \"application/json\"}"
+        }
+      ]
     }
   ],
-  "accessories": [
-    {
-      "accessory": "HttpWebHooks",
-      "name": "PC Music Playback",
-      "username": "",
-      "password": "",
-      "switchHandling": "yes",
-      "http_method": "POST",
-      "on_url": "http://localhost:3689/api/player/play",
-      "off_url": "http://localhost:3689/api/player/stop",
-      "http_headers": {
-        "Content-Type": "application/json"
-      },
-      "http_body_on": "{}",
-      "http_body_off": "{}",
-      "state_url": "http://localhost:3689/api/player",
-      "state_method": "GET",
-      "state_field": "state",
-      "state_on_value": "play",
-      "state_off_value": "stop",
-      "timeout": 3000
-    }
-  ]
+  "accessories": []
 }
