@@ -28,6 +28,7 @@ Load this skill when the user wants to:
 - **AirPlay reconnection on return** — bridge restarts `owntone.service` when `WAS_IDLE=true` and streams reappear
 - **GRACE=2s idle timeout** — release session quickly when output changes away
 - **Volume clamp 0–100** — Owntone API rejects negatives; mute = 0 with toggle restore
+- **Firewall must allow Homebridge**: `51826/tcp` (HAP) + `5353/udp` (mDNS)
 
 ## Decision Gates
 
@@ -67,6 +68,7 @@ Load this skill when the user wants to:
     - Install: `npm install -g homebridge homebridge-config-ui-x homebridge-http-webhooks`
     - Deploy config: `cp references/homebridge-config.json ~/.homebridge/config.json`
     - Deploy service: `cp references/homebridge.service ~/.config/systemd/user/`
+    - Firewall: `sudo ufw allow 51826/tcp && sudo ufw allow 5353/udp`
     - Start: `systemctl --user daemon-reload && systemctl --user enable --now homebridge.service`
     - Pair: Open Home app on iPhone → Add Accessory → Enter PIN 123-45-678
 11. **Verify**: play audio → check `wpctl status` shows streams → `homepod_airplay` → Owntone `state=play`

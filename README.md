@@ -62,6 +62,9 @@ pkill easyeffects 2>/dev/null
 #    Install: npm install -g homebridge homebridge-config-ui-x homebridge-http-webhooks
 #    Deploy: cp references/homebridge-config.json ~/.homebridge/config.json
 #            cp references/homebridge.service ~/.config/systemd/user/
+#    Firewall: Allow Homebridge HAP (51826/tcp) and mDNS (5353/udp)
+#            sudo ufw allow 51826/tcp
+#            sudo ufw allow 5353/udp
 #    Start: systemctl --user daemon-reload && systemctl --user enable --now homebridge.service
 #    Pair: Open Home app on iPhone → Add Accessory → Enter PIN 123-45-678
 
