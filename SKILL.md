@@ -52,7 +52,8 @@ Load this skill when the user wants to:
 4. **Deploy bridge script** → `~/.local/bin/homepod-bridge` (executable)
    - Watches `homepod_airplay` sink, starts `parec` → FIFO → Owntone pipe → AirPlay 2
    - On idle→active: if `WAS_IDLE` restart `owntone.service` then `player/play`
-   - `GRACE=2`, `COOLDOWN=6`, `POLL=0.25`
+   - `GRACE=1`, `COOLDOWN=2`, `POLL=0.1`, `SILENCE_TIMEOUT=10`
+   - Never delete the FIFO on stop: Owntone's scanner drops the pipe item and `player/play` returns 500 until autostart re-adds it
 5. **Deploy volume script** → `~/.local/bin/homepod-volume` (executable)
    - `up`/`down`/`set N`/`mute`/`get` via Owntone API `/api/outputs/{id}`
    - Persists last volume in `/tmp/homepod-volume-state` for mute toggle
@@ -62,7 +63,8 @@ Load this skill when the user wants to:
 7. **WirePlumber metadata**: set default sink to `homepod_airplay`
    - `pw-metadata -n settings 0 default.audio.sink <sink-id>`
 8. **Hyprland bindings** (`~/.config/hypr/bindings.lua`):
-   - Unbind defaults FIRST, then bind `XF86AudioRaiseVolume/LowerVolume/Mute` to `homepod-volume`
+   - Unbind defaults FIRST, then bind `XF86AudioRaiseVolume/LowerVolume/Mute` to `~/.local/bin/smart-volume up|down|mute`
+   - `smart-volume` picks the path by default sink: `homepod_airplay` → Owntone API, anything else → `omarchy-audio-output-volume` (both show the same Omarchy OSD)
 9. **Disable Easy Effects autostart**: `mv ~/.config/autostart/com.github.wwmm.easyeffects.desktop{,.disabled}`
 10. **Optional: Homebridge for Siri control**:
     - Install: `npm install -g homebridge homebridge-config-ui-x homebridge-http-webhooks`
@@ -77,7 +79,8 @@ Load this skill when the user wants to:
 
 Return a working HomePod Mini AirPlay 2 setup with:
 - `homepod_airplay` as default PipeWire sink
-- Auto-reconnect on output switch (2s grace)
+- Auto-reconnect on output switch (1s grace, ~3.5s resume)
+- One OSD only: the Omarchy Quickshell bar (`omarchy-osd`), themed by the current theme
 - Multimedia keys control HomePod volume (0–100, mute toggle)
 - No Easy Effects interference
 - Owntone stable (no buffer underruns)
@@ -95,12 +98,16 @@ Return a working HomePod Mini AirPlay 2 setup with:
 | No audio after switching back to HomePod | Owntone RAOP session stale, pipe broken | Bridge detects `WAS_IDLE=true` → `systemctl --user restart owntone.service` → new session |
 | `write() failed: Broken pipe` in bridge logs | parec writing to FIFO after Owntone closed pipe | Bridge restarts session on next active stream detection |
 | iPhone takes over AirPlay, PC audio stops and doesn't recover | HomePod only supports one AirPlay source; Owntone session stale when iPhone releases | Bridge polls HomePod IP, waits for availability before restarting owntone (`HOMEPOD_IP` env var) |
+| Two volume bars / transparent bar shows up | `swayosd` styling imports `~/.config/omarchy/current/theme/swayosd.css`, which does not exist in this Omarchy version | Do not call `swayosd-client`; use `omarchy-osd` (Quickshell OSD, theme-aware) |
+| `player/play` returns 500 after idle | FIFO was deleted, Owntone scanner dropped the pipe item | Keep the FIFO (`[ -p "$FIFO" ] || mkfifo "$FIFO"`), never `rm` it on stop |
+| Owntone restarts in a loop | A stale stream (e.g. leftover `speaker-test`) keeps the sink "active" | `pgrep -a speaker-test` and kill leftovers; check `pactl list short sink-inputs` |
 | Brave/YouTube Music clicks don't work (only keyboard) | Vulkan+Wayland conflict in Chromium | Launch Brave with `--disable-features=Vulkan` (keeps GPU acceleration) or disable Vulkan in `brave://flags` |
 
 ## References
 
 - `assets/homepod-bridge` — bridge daemon script (with WAS_IDLE auto-reconnect, HomePod availability polling)
 - `assets/homepod-volume` — volume CLI (0–100 clamp, mute toggle, state persistence)
+- `assets/smart-volume` — sink-aware volume for media keys (HomePod API vs system, Omarchy OSD)
 - `references/owntone.conf.example` — Owntone config template
 - `references/homepod-bridge.service` — systemd unit
 - `references/owntone.service` — systemd unit
