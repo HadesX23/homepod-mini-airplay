@@ -1,10 +1,23 @@
 #!/usr/bin/env bash
-# HomePod Mini Volume Control via Owntone API
-# Controls the HomePod Mini (AirPlay 2) volume directly, not PipeWire sink volume.
+# Control HomePod Mini volume via Owntone API
 
 OUT_ID="148186734507409"
 API="http://localhost:3689/api"
 STATE_FILE="/tmp/homepod-volume-state"
+
+notify_volume() {
+    local vol="$1"
+    local muted="$2"
+    local icon="audio-volume-high"
+    if [ "$muted" = "true" ] || [ "${vol:-0}" = "0" ]; then
+        icon="audio-volume-muted"
+    elif (( vol < 33 )); then
+        icon="audio-volume-low"
+    elif (( vol < 66 )); then
+        icon="audio-volume-medium"
+    fi
+    notify-send -i "$icon" -h int:value:"$vol" -h string:x-canonical-private-synchronous:volume "Volumen HomePod: ${vol}%" -t 1000 2>/dev/null || true
+}
 
 get_volume() {
     curl -sf "$API/outputs" 2>/dev/null | jq -r ".outputs[] | select(.id==\"$OUT_ID\") | .volume"
@@ -25,6 +38,7 @@ case "${1:-}" in
         set_volume "$new"
         echo "$new" > "$STATE_FILE"
         echo "Volume: $new%"
+        notify_volume "$new" "false"
         ;;
     down)
         current=$(get_volume)
@@ -33,6 +47,7 @@ case "${1:-}" in
         set_volume "$new"
         echo "$new" > "$STATE_FILE"
         echo "Volume: $new%"
+        notify_volume "$new" "false"
         ;;
     set)
         vol="$2"
@@ -42,15 +57,18 @@ case "${1:-}" in
                 prev=$(cat "$STATE_FILE" 2>/dev/null || echo 50)
                 set_volume "$prev"
                 echo "Volume: $prev% (unmuted)"
+                notify_volume "$prev" "false"
             else
                 echo "$current" > "$STATE_FILE"
                 set_volume 0
                 echo "Muted (was $current%)"
+                notify_volume 0 "true"
             fi
         else
             set_volume "$vol"
             echo "$vol" > "$STATE_FILE"
             echo "Volume: $vol%"
+            notify_volume "$vol" "false"
         fi
         ;;
     mute)
@@ -59,10 +77,12 @@ case "${1:-}" in
             prev=$(cat "$STATE_FILE" 2>/dev/null || echo 50)
             set_volume "$prev"
             echo "Volume: $prev% (unmuted)"
+            notify_volume "$prev" "false"
         else
             echo "$current" > "$STATE_FILE"
             set_volume 0
             echo "Muted"
+            notify_volume 0 "true"
         fi
         ;;
     get)
