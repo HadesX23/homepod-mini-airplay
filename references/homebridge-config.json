@@ -3,7 +3,8 @@
     "name": "HomePod PC Bridge",
     "username": "CC:22:3D:E3:CE:30",
     "port": 51826,
-    "pin": "123-45-678"
+    "pin": "123-45-678",
+    "bind": ["enp3s0"]
   },
   "description": "Homebridge for controlling PC AirPlay playback via Siri",
   "platforms": [
@@ -25,11 +26,11 @@
           "name": "PC Music Playback",
           "rejectUnauthorized": true,
           "on_url": "http://localhost:3689/api/player/play",
-          "on_method": "POST",
+          "on_method": "PUT",
           "on_body": "{}",
           "on_headers": "{\"Content-Type\": \"application/json\"}",
           "off_url": "http://localhost:3689/api/player/stop",
-          "off_method": "POST",
+          "off_method": "PUT",
           "off_body": "{}",
           "off_headers": "{\"Content-Type\": \"application/json\"}"
         }
