@@ -203,7 +203,7 @@ restart_session() {
     fi
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
     start_parec
-    sleep 3
+    sleep 1.5
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/outputs/$OUT_ID" \
         -H 'Content-Type: application/json' -d '{"selected":true}' 2>/dev/null
     # Retry play command up to 5 times with 1s delay
