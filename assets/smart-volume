@@ -1,39 +1,28 @@
 #!/usr/bin/env bash
-# Smart volume control: HomePod when it's default sink, otherwise system volume
-# Uses swayosd-client for OSD notifications (Omarchy default)
+# Fallback volume control (uses Omarchy defaults via swayosd)
 
-HOMEPOD_SINK="homepod_airplay"
-DEFAULT_SINK=$(pactl get-default-sink)
+DEFAULT_SINK=$(pactl get-default-sink 2>/dev/null | head -1)
 
 notify_volume() {
-    local action="$1"
-    swayosd-client --output-volume "$action" 2>/dev/null || true
+    swayosd-client --output-volume "$1" 2>/dev/null || true
 }
 
 case "${1:-}" in
     up)
-        if [ "$DEFAULT_SINK" = "$HOMEPOD_SINK" ]; then
-            ~/.local/bin/homepod-volume up
-        else
-            wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%+
-            notify_volume raise
-        fi
+        omarchy-audio-output-volume +5
+        notify_volume raise
         ;;
     down)
-        if [ "$DEFAULT_SINK" = "$HOMEPOD_SINK" ]; then
-            ~/.local/bin/homepod-volume down
-        else
-            wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-
-            notify_volume lower
-        fi
+        omarchy-audio-output-volume -5
+        notify_volume lower
         ;;
     mute)
-        if [ "$DEFAULT_SINK" = "$HOMEPOD_SINK" ]; then
-            ~/.local/bin/homepod-volume mute
+        if [ -n "$DEFAULT_SINK" ]; then
+            pactl set-sink-mute "$DEFAULT_SINK" toggle
         else
-            wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
-            notify_volume mute-toggle
+            pactl set-sink-mute @DEFAULT_AUDIO_SINK@ toggle
         fi
+        notify_volume mute-toggle
         ;;
     *)
         echo "Usage: $0 {up|down|mute}"
