@@ -6,6 +6,7 @@
 # Handles iPhone/other device AirPlay takeover by polling HomePod availability.
 # Releases AirPlay (deselects output) when PC goes idle so other devices can use HomePod.
 # Uses Owntone player progress to detect actual audio (not just stream presence).
+# Proactively stops parec on "stop"/"pause" to prevent Broken pipe from Owntone closing pipe.
 
 set -u
 
@@ -27,17 +28,26 @@ LAST_AVAILABLE_CHECK=0
 HOMEPOD_AVAILABLE=true
 LAST_PROGRESS=0
 LAST_PROGRESS_CHANGE=0
+LAST_STATE=""
+LAST_RESTART_TIME=0
+JUST_STOPPED=false
+JUST_STOPPED_TIME=0
 
 log() { echo "[homepod-bridge] $*"; }
 
 player_state() {
-    curl -sf --max-time 2 "$API/player" 2>/dev/null |
-        sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p'
+    local state
+    state=$(curl -sf --max-time 2 "$API/player" 2>/dev/null |
+        sed -n 's/.*"state"[[:space:]]*:[[:space:]]*"\([a-z]*\)".*/\1/p')
+    # Fallback: if curl fails or state empty, assume "play" to avoid unwanted restarts
+    echo "${state:-play}"
 }
 
 player_progress() {
-    curl -sf --max-time 2 "$API/player" 2>/dev/null |
-        sed -n 's/.*"item_progress_ms"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p'
+    local progress
+    progress=$(curl -sf --max-time 2 "$API/player" 2>/dev/null |
+        sed -n 's/.*"item_progress_ms"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
+    echo "${progress:-0}"
 }
 
 sink_index() {
@@ -102,6 +112,39 @@ check_audio_activity() {
     return 0  # Can't determine or no progress yet, assume active
 }
 
+handle_state_change() {
+    local state="$1"
+    local now=$(date +%s)
+    
+    log "handle_state_change: LAST_STATE='$LAST_STATE', current='$state'"
+    # If state changed from stop/pause to play, restart session with grace period
+    if { [ "$LAST_STATE" = "stop" ] || [ "$LAST_STATE" = "pause" ]; } && [ "$state" = "play" ]; then
+        log "state changed from $LAST_STATE to play, restarting session"
+        LAST_RESTART_TIME=$(date +%s)
+        restart_session
+        LAST_STATE="play"
+        return
+    fi
+    # If we just restarted session, ignore immediate pause/stop for 3s
+    if [ $((now - LAST_RESTART_TIME)) -lt 3 ] && { [ "$state" = "pause" ] || [ "$state" = "stop" ]; }; then
+        log "ignoring pause/stop during restart grace period"
+        LAST_STATE="$state"
+        return
+    fi
+    # If state changed from play to stop/pause, proactively stop parec and release AirPlay
+    if [ "$LAST_STATE" = "play" ] && { [ "$state" = "stop" ] || [ "$state" = "pause" ]; }; then
+        log "state changed from play to $state, proactively stopping parec"
+        curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
+        stop_parec
+        release_airplay
+        WAS_IDLE=true
+        JUST_STOPPED=true
+        JUST_STOPPED_TIME=$(date +%s)
+        log "user paused/stopped, session released, AirPlay freed"
+    fi
+    LAST_STATE="$state"
+}
+
 release_airplay() {
     log "releasing AirPlay (deselecting output $OUT_ID)"
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/outputs/$OUT_ID" \
@@ -160,11 +203,19 @@ restart_session() {
     fi
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
     start_parec
-    sleep 0.3
+    sleep 3
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/outputs/$OUT_ID" \
         -H 'Content-Type: application/json' -d '{"selected":true}' 2>/dev/null
-    curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/play" 2>/dev/null
-    log "session restarted"
+    # Retry play command up to 5 times with 1s delay
+    for i in {1..5}; do
+        if curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/play" 2>/dev/null; then
+            log "session restarted (play attempt $i succeeded)"
+            return 0
+        fi
+        log "play attempt $i failed, retrying..."
+        sleep 1
+    done
+    log "session restarted (play failed after 5 attempts)"
 }
 
 cleanup() {
@@ -180,6 +231,14 @@ while :; do
     state="$(player_state)"
     now=$(date +%s)
 
+    # Clear JUST_STOPPED flag after grace period
+    if [ "$JUST_STOPPED" = "true" ] && [ $((now - JUST_STOPPED_TIME)) -ge 10 ]; then
+        JUST_STOPPED=false
+    fi
+
+    # Handle state transitions (play -> stop/pause)
+    handle_state_change "$state"
+
     if [ "${n:-0}" -gt 0 ]; then
         IDLE_SINCE=""
         # Check if audio is actually advancing via Owntone progress
@@ -191,8 +250,14 @@ while :; do
             WAS_IDLE=true
             log "silence timeout, session released, AirPlay freed"
         elif [ -z "$PAREC_PID" ] || ! kill -0 "$PAREC_PID" 2>/dev/null; then
-            restart_session
-        elif [ "$state" != "play" ] && [ $((now - LAST_RESTART)) -ge "$COOLDOWN" ]; then
+            # Active streams but no parec -> start session (unless we just stopped)
+            if [ "$JUST_STOPPED" = "true" ] && [ $((now - JUST_STOPPED_TIME)) -lt 10 ]; then
+                log "active streams but recently stopped, waiting..."
+            else
+                log "active streams but no parec, restarting session"
+                restart_session
+            fi
+        elif [ "$state" != "play" ] && [ "$state" != "stop" ] && [ "$state" != "pause" ] && [ $((now - LAST_RESTART)) -ge "$COOLDOWN" ]; then
             restart_session
         fi
     else

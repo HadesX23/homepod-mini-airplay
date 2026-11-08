@@ -136,7 +136,7 @@ Multimedia keys bound in Hyprland:
 | No audio after switching back to HomePod | Owntone RAOP session stale, pipe broken | Bridge detects `WAS_IDLE=true` → `systemctl --user restart owntone.service` → new session |
 | `write() failed: Broken pipe` in bridge logs | parec writing to FIFO after Owntone closed pipe | Bridge restarts session on next active stream detection |
 | iPhone takes over AirPlay, PC audio stops and doesn't recover | HomePod only supports one AirPlay source; Owntone session stale when iPhone releases | Bridge polls HomePod IP, waits for availability before restarting owntone (`HOMEPOD_IP` env var) |
-| Brave/YouTube Music clicks don't work (only keyboard) | GPU hardware acceleration issue on Wayland | Launch Brave with `--disable-gpu --disable-gpu-compositing` or disable in Settings → System → "Use graphics acceleration when available" |
+| Brave/YouTube Music clicks don't work (only keyboard) | Vulkan+Wayland conflict in Chromium | Launch Brave with `--disable-features=Vulkan` (keeps GPU acceleration) or disable Vulkan in `brave://flags` |
 
 ## Troubleshooting (Quick Reference)
 
