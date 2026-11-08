@@ -14,10 +14,10 @@ SINK="homepod_airplay"
 FIFO="$HOME/.local/share/homepod-pipe/homepod.pcm"
 OUT_ID="${HOMEPOD_OUTPUT_ID:-148186734507409}"
 API="http://localhost:3689/api"
-POLL="0.25"
-GRACE=2
-COOLDOWN=6
-SILENCE_TIMEOUT=30
+POLL="0.1"
+GRACE=1
+COOLDOWN=2
+SILENCE_TIMEOUT=10
 HOMEPOD_IP="${HOMEPOD_IP:-192.168.1.83}"
 
 PAREC_PID=""
@@ -54,6 +54,7 @@ sink_index() {
     pactl list short sinks 2>/dev/null | awk -v s="$SINK" '$2 == s { print $1; exit }'
 }
 
+# Count of non-corked playback streams on our sink.
 active_streams() {
     local idx
     idx="$(sink_index)"
@@ -117,8 +118,9 @@ handle_state_change() {
     local now=$(date +%s)
     
     log "handle_state_change: LAST_STATE='$LAST_STATE', current='$state'"
-    # If state changed from stop/pause to play, restart session with grace period
-    if { [ "$LAST_STATE" = "stop" ] || [ "$LAST_STATE" = "pause" ]; } && [ "$state" = "play" ]; then
+    # Only re-open a session we released ourselves; otherwise the pipe autostarts
+    # on its own and a restart here would thrash pause->play->pause.
+    if [ "$WAS_IDLE" = true ] && { [ "$LAST_STATE" = "stop" ] || [ "$LAST_STATE" = "pause" ]; } && [ "$state" = "play" ]; then
         log "state changed from $LAST_STATE to play, restarting session"
         LAST_RESTART_TIME=$(date +%s)
         restart_session
@@ -155,8 +157,9 @@ start_parec() {
     if [ -n "$PAREC_PID" ] && kill -0 "$PAREC_PID" 2>/dev/null; then
         return
     fi
-    rm -f "$FIFO"
-    mkfifo "$FIFO"
+    # Keep the FIFO in place: deleting it makes Owntone's scanner drop the pipe
+    # item, and then /api/player/play fails with 500 until it autostarts again.
+    [ -p "$FIFO" ] || mkfifo "$FIFO"
     parec --raw --format=s16le --rate=44100 --channels=2 --device="$SINK.monitor" > "$FIFO" &
     PAREC_PID=$!
     LAST_PROGRESS=0
@@ -169,7 +172,6 @@ stop_parec() {
         wait "$PAREC_PID" 2>/dev/null
     fi
     PAREC_PID=""
-    rm -f "$FIFO"
 }
 
 restart_owntone() {
@@ -177,10 +179,10 @@ restart_owntone() {
     systemctl --user restart owntone.service
     for i in {1..30}; do
         if curl -sf --max-time 1 "$API/outputs" >/dev/null 2>&1; then
-            sleep 0.5
+            sleep 0.15
             return 0
         fi
-        sleep 0.2
+        sleep 0.1
     done
     log "owntone restart timeout"
     return 1
@@ -190,12 +192,12 @@ restart_session() {
     LAST_RESTART=$(date +%s)
     if [ "$WAS_IDLE" = true ]; then
         local attempts=0
-        while [ $attempts -lt 20 ] && ! check_homepod_available; do
-            log "waiting for HomePod to become available... ($attempts/20)"
-            sleep 1
+        while [ $attempts -lt 10 ] && ! check_homepod_available; do
+            log "waiting for HomePod to become available... ($attempts/10)"
+            sleep 0.3
             attempts=$((attempts + 1))
         done
-        if [ $attempts -eq 20 ]; then
+        if [ $attempts -eq 10 ]; then
             log "HomePod still unavailable, attempting restart anyway"
         fi
         restart_owntone
@@ -203,19 +205,18 @@ restart_session() {
     fi
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/stop" 2>/dev/null
     start_parec
-    sleep 1.5
+    sleep 0.4
     curl -sf --max-time 2 -o /dev/null -X PUT "$API/outputs/$OUT_ID" \
         -H 'Content-Type: application/json' -d '{"selected":true}' 2>/dev/null
-    # Retry play command up to 5 times with 1s delay
-    for i in {1..5}; do
+    # Retry play until Owntone's pipe source has queued its item (data flowing).
+    for i in $(seq 1 20); do
         if curl -sf --max-time 2 -o /dev/null -X PUT "$API/player/play" 2>/dev/null; then
             log "session restarted (play attempt $i succeeded)"
             return 0
         fi
-        log "play attempt $i failed, retrying..."
-        sleep 1
+        sleep 0.15
     done
-    log "session restarted (play failed after 5 attempts)"
+    log "session restarted (play failed after 20 attempts)"
 }
 
 cleanup() {
@@ -232,7 +233,7 @@ while :; do
     now=$(date +%s)
 
     # Clear JUST_STOPPED flag after grace period
-    if [ "$JUST_STOPPED" = "true" ] && [ $((now - JUST_STOPPED_TIME)) -ge 10 ]; then
+    if [ "$JUST_STOPPED" = "true" ] && [ $((now - JUST_STOPPED_TIME)) -ge 3 ]; then
         JUST_STOPPED=false
     fi
 
@@ -251,7 +252,7 @@ while :; do
             log "silence timeout, session released, AirPlay freed"
         elif [ -z "$PAREC_PID" ] || ! kill -0 "$PAREC_PID" 2>/dev/null; then
             # Active streams but no parec -> start session (unless we just stopped)
-            if [ "$JUST_STOPPED" = "true" ] && [ $((now - JUST_STOPPED_TIME)) -lt 10 ]; then
+            if [ "$JUST_STOPPED" = "true" ] && [ $((now - JUST_STOPPED_TIME)) -lt 3 ]; then
                 log "active streams but recently stopped, waiting..."
             else
                 log "active streams but no parec, restarting session"

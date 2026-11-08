@@ -1,53 +1,25 @@
 #!/usr/bin/env bash
-# Smart volume control: HomePod when it's default sink, otherwise system volume
-# Uses swayosd-client for OSD notifications (Omarchy default)
+# Volume keys: real HomePod volume when it is the default sink, system volume otherwise.
+# Both paths show the Omarchy OSD (blue bar).
 
 HOMEPOD_SINK="homepod_airplay"
-DEFAULT_SINK=$(pactl get-default-sink)
 
-notify_volume() {
-    local action="$1"
-    swayosd-client --output-volume "$action" 2>/dev/null || true
-}
-
-get_sink() {
-    if [ -n "$DEFAULT_SINK" ] && [ "$DEFAULT_SINK" != "@DEFAULT_AUDIO_SINK@" ]; then
-        echo "$DEFAULT_SINK"
-    else
-        echo "@DEFAULT_AUDIO_SINK@"
-    fi
-}
-
-case "${1:-}" in
-    up)
-        if [ "$DEFAULT_SINK" = "$HOMEPOD_SINK" ]; then
-            ~/.local/bin/homepod-volume up
-        else
-            SINK=$(get_sink)
-            pactl set-sink-volume "$SINK" +5%
-            notify_volume raise
-        fi
-        ;;
-    down)
-        if [ "$DEFAULT_SINK" = "$HOMEPOD_SINK" ]; then
-            ~/.local/bin/homepod-volume down
-        else
-            SINK=$(get_sink)
-            pactl set-sink-volume "$SINK" -5%
-            notify_volume lower
-        fi
-        ;;
-    mute)
-        if [ "$DEFAULT_SINK" = "$HOMEPOD_SINK" ]; then
-            ~/.local/bin/homepod-volume mute
-        else
-            SINK=$(get_sink)
-            pactl set-sink-mute "$SINK" toggle
-            notify_volume mute-toggle
-        fi
-        ;;
-    *)
-        echo "Usage: $0 {up|down|mute}"
-        exit 1
-        ;;
-esac
+if [ "$(pactl get-default-sink 2>/dev/null)" = "$HOMEPOD_SINK" ]; then
+    case "${1:-}" in
+        up)   HOMEPOD_NO_NOTIFY=1 ~/.local/bin/homepod-volume up >/dev/null ;;
+        down) HOMEPOD_NO_NOTIFY=1 ~/.local/bin/homepod-volume down >/dev/null ;;
+        mute) HOMEPOD_NO_NOTIFY=1 ~/.local/bin/homepod-volume mute >/dev/null ;;
+        *)    echo "Usage: $0 {up|down|mute}" >&2; exit 1 ;;
+    esac
+    vol=$(~/.local/bin/homepod-volume get)
+    vol=${vol:-0}
+    if [ "$vol" -eq 0 ]; then icon=volume-muted; else icon=volume-high; fi
+    omarchy-osd -i "$icon" -p "$vol"
+else
+    case "${1:-}" in
+        up)   omarchy-audio-output-volume raise ;;
+        down) omarchy-audio-output-volume lower ;;
+        mute) omarchy-audio-output-volume mute-toggle ;;
+        *)    echo "Usage: $0 {up|down|mute}" >&2; exit 1 ;;
+    esac
+fi

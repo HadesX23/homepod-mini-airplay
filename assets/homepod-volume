@@ -16,6 +16,7 @@ notify_volume() {
     elif (( vol < 66 )); then
         icon="audio-volume-medium"
     fi
+    [ "${HOMEPOD_NO_NOTIFY:-0}" = "1" ] && return 0
     notify-send -i "$icon" -h int:value:"$vol" -h string:x-canonical-private-synchronous:volume "Volumen HomePod: ${vol}%" -t 1000 2>/dev/null || true
 }
 
